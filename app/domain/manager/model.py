@@ -1,8 +1,8 @@
+from typing import Optional
+from uuid import UUID
 from app.shared.base_domain.model import BaseTable
 from app.domain.personal_data.model import DatosSensibles
 from sqlmodel import Field, Relationship
-from app.domain.service.model import Servicio
-
 
 
 class Gerente(BaseTable, table=True):

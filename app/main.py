@@ -8,6 +8,17 @@ from app.shared.middleware.cryptography import (
     EncryptionMiddleware,
 )
 
+# Importar todos los modelos para que SQLModel pueda crear las tablas
+from app.domain.personal_data.model import DatosPersonalesNoCriticos, DatosSensibles
+from app.domain.admin.model import Administrador
+from app.domain.manager.model import Gerente, GerenteServicio
+from app.domain.user.model import Usuario
+from app.domain.services.model import Servicio
+from app.domain.applications.model import Aplicacion, AplicacionServicio
+from app.domain.device.model import Device, DeviceService
+from app.domain.roles.model import Rol, PermisoRol, UsuarioRol
+from app.domain.tickets.model import TicketStatus, TicketServicio, TicketEcosistema
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
