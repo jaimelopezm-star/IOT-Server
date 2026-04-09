@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
 from app.database.format import UserPlainAttribute
 from app.domain.auth.security import get_password_hash
+import secrets
 
 
 class NonCriticalPersonalData(BaseTable, table=True):
@@ -175,14 +176,18 @@ class ManagerService(BaseTable, table=True):
         sa_relationship_kwargs={"lazy": "selectin"},
     )
 
+def get_api_key():
+    return secrets.token_hex(32)
+
 
 class Application(BaseTable, table=True):
     __tablename__ = "application"  # pyright: ignore[reportAssignmentType]
 
     name: str = Field(unique=True)
-    version: str | None = None
-    url: str | None = None
-    description: str | None = None
+    version: str 
+    url: str 
+    description: str 
+    api_key: str = Field(default_factory=get_api_key, unique=True, index=True)
     administrator_id: UUID = Field(foreign_key="administrator.id")
     is_active: bool = Field(default=True)
 
