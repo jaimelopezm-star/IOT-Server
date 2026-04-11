@@ -175,7 +175,6 @@ class SessionService:
     ) -> int:
         return await self._repository.increment_rate_limit(
             ip_address,
-            max_attempts,
             window_seconds,
         )
     

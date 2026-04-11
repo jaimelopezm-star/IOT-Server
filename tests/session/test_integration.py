@@ -203,7 +203,7 @@ class TestSessionRepositoryIntegration:
         
         # Increment to limit
         for _ in range(max_attempts):
-            await repository.increment_rate_limit(ip_address, max_attempts, 60)
+            await repository.increment_rate_limit(ip_address, window_seconds=60)
         
         # Now should be limited
         assert await repository.is_rate_limited(ip_address, max_attempts) is True

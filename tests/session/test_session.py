@@ -56,6 +56,13 @@ class TestJWEHandler:
     def test_decrypt_invalid_token_raises_exception(self, jwe_handler):
         with pytest.raises(JWEError):
             jwe_handler.decrypt("invalid.token.here")
+    
+    def test_decrypt_expired_token_raises_exception(self, jwe_handler, sample_claims):
+        # Create token that expires immediately
+        token = jwe_handler.encrypt(sample_claims, ttl_minutes=-1)
+        
+        with pytest.raises(JWEError, match="Token has expired"):
+            jwe_handler.decrypt(token)
 
     def test_verify_expiration_valid_token(self, jwe_handler):
         now = datetime.now(timezone.utc)

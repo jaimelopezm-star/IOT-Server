@@ -1,9 +1,13 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SessionData(BaseModel):
+    model_config = ConfigDict(
+        json_encoders={datetime: lambda v: v.isoformat()}
+    )
+    
     user_id: str
     token_id: str
     refresh_token: str
@@ -14,11 +18,6 @@ class SessionData(BaseModel):
     user_agent: str
     created_at: datetime
     last_activity: datetime
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
 
 
 class SessionTokens(BaseModel):
@@ -33,9 +32,3 @@ class UserData(BaseModel):
     account_type: str
     is_master: bool
     token_id: Optional[str] = None
-
-
-class RateLimitInfo(BaseModel):
-    ip_address: str
-    attempts: int
-    blocked_until: Optional[datetime] = None

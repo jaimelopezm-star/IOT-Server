@@ -37,6 +37,10 @@ class SessionRepository:
         value = session_data.model_dump_json()
         
         await self.client.setex(key, ttl_seconds, value)
+        
+        # Create reverse index for refresh token lookup (O(1) instead of O(n))
+        refresh_key = f"refresh_token:{session_data.refresh_token}"
+        await self.client.setex(refresh_key, ttl_seconds, user_id)
     
     async def get_session(self, user_id: str) -> Optional[SessionData]:
         await self.connect()
@@ -57,40 +61,40 @@ class SessionRepository:
     async def delete_session(self, user_id: str) -> None:
         await self.connect()
         
+        # Get session to delete refresh token index
+        session = await self.get_session(user_id)
+        
         key = f"session:{user_id}"
         await self.client.delete(key)
+        
+        # Delete refresh token index
+        if session:
+            refresh_key = f"refresh_token:{session.refresh_token}"
+            await self.client.delete(refresh_key)
     
     async def update_last_activity(self, user_id: str) -> None:
+        await self.connect()
+        
         session = await self.get_session(user_id)
         if session:
             session.last_activity = datetime.now(timezone.utc)
-            await self.store_session(user_id, session)
+            
+            # Get current TTL to avoid resetting expiration
+            key = f"session:{user_id}"
+            remaining_ttl = await self.client.ttl(key)
+            
+            # Use remaining TTL or default if key doesn't expire
+            ttl = remaining_ttl if remaining_ttl > 0 else 259200
+            await self.store_session(user_id, session, ttl_seconds=ttl)
     
     async def get_user_by_refresh_token(self, refresh_token: str) -> Optional[str]:
         await self.connect()
         
-        cursor = 0
-        while True:
-            cursor, keys = await self.client.scan(
-                cursor,
-                match="session:*",
-                count=100,
-            )
-            
-            for key in keys:
-                data = await self.client.get(key)
-                if data:
-                    try:
-                        session_dict = json.loads(data)
-                        if session_dict.get("refresh_token") == refresh_token:
-                            return session_dict.get("user_id")
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-            
-            if cursor == 0:
-                break
+        # Use reverse index for O(1) lookup instead of O(n) scan
+        refresh_key = f"refresh_token:{refresh_token}"
+        user_id = await self.client.get(refresh_key)
         
-        return None
+        return user_id
     
     async def add_to_blacklist(self, token_id: str, ttl_seconds: int = 1800) -> None:
         await self.connect()
@@ -108,7 +112,6 @@ class SessionRepository:
     async def increment_rate_limit(
         self,
         ip_address: str,
-        max_attempts: int = 3,
         window_seconds: int = 900,
     ) -> int:
         await self.connect()

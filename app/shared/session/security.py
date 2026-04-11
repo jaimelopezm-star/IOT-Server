@@ -53,6 +53,10 @@ class JWEHandler:
         except json.JSONDecodeError as e:
             raise JWEError(f"Invalid JSON payload in token: {e}")
         
+        # Verify expiration internally
+        if not self.verify_expiration(claims):
+            raise JWEError("Token has expired")
+        
         return claims
     
     def verify_expiration(self, claims: Dict[str, Any]) -> bool:
