@@ -1,13 +1,10 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, ConfigDict
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field
 
 
 class SessionData(BaseModel):
-    model_config = ConfigDict(
-        json_encoders={datetime: lambda v: v.isoformat()}
-    )
-    
     user_id: str
     token_id: str
     refresh_token: str
@@ -35,25 +32,14 @@ class UserData(BaseModel):
 
 
 class EntitySessionData(BaseModel):
-    model_config = ConfigDict(
-        json_encoders={datetime: lambda v: v.isoformat()}
-    )
-    
     session_id: str
     entity_id: str
-    entity_type: str
     key_session: str
     ip_address: str
-    user_agent: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     last_activity: datetime
 
 
 class EntitySessionResponse(BaseModel):
     session_id: str
-    encrypted_token: str
-    key_session: str
-
-
-class EntitySessionKeyResponse(BaseModel):
-    key_session: str
