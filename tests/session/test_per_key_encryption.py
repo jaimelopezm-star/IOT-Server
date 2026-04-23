@@ -68,7 +68,7 @@ async def service(valkey_client):
 
 @pytest.fixture
 def key_session() -> str:
-    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
 
 
 @pytest.fixture
@@ -295,7 +295,7 @@ class TestProcessEncryptedRequest:
     @pytest.mark.asyncio
     async def test_tag_cross_session_rejected(self, service, key_session):
         a, b = uuid4(), uuid4()
-        key_b = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+        key_b = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
         r1 = await service.create_entity_session(a, key_session, "1.1.1.1")
         r2 = await service.create_entity_session(b, key_b, "1.1.1.2")
 
