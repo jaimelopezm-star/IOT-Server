@@ -242,7 +242,7 @@ class TestSessionServiceIntegration:
         # Verify tokens structure
         assert tokens.access_token is not None
         assert tokens.refresh_token is not None
-        assert tokens.token_type == "Bearer"
+        assert tokens.token_type == "bearer"
         
         # Verify session stored
         session = await service.get_session(user_id)

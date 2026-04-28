@@ -1,5 +1,6 @@
 from .exceptions import (
     InvalidEntityIdException,
+    InvalidIpAddressException,
     InvalidKeySessionException,
     InvalidMetadataException,
     InvalidRefreshTokenException,
@@ -17,12 +18,14 @@ from .models import (
     SessionTokens,
     UserData,
 )
+from .security import SessionHMAC
 from .service import SessionService, SessionServiceDep, get_session_service
 
 __all__ = [
     "SessionService",
     "SessionServiceDep",
     "get_session_service",
+    "SessionHMAC",
     "SessionData",
     "SessionTokens",
     "UserData",
@@ -36,6 +39,7 @@ __all__ = [
     "SessionExpiredException",
     "InvalidTagException",
     "InvalidEntityIdException",
+    "InvalidIpAddressException",
     "InvalidKeySessionException",
     "InvalidMetadataException",
 ]

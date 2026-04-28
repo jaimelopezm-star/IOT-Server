@@ -21,6 +21,7 @@ import valkey.asyncio as valkey
 
 from app.shared.session.exceptions import (
     InvalidEntityIdException,
+    InvalidIpAddressException,
     InvalidKeySessionException,
     InvalidMetadataException,
     InvalidTagException,
@@ -28,7 +29,7 @@ from app.shared.session.exceptions import (
     SessionNotFoundException,
 )
 from app.shared.session.repository import SessionRepository
-from app.shared.session.security import JWEHandler
+from app.shared.session.security import SessionHMAC
 from app.shared.session.service import SessionService
 
 
@@ -202,8 +203,13 @@ class TestCreateEntitySession:
 
     @pytest.mark.asyncio
     async def test_empty_ip_raises(self, service, entity_id, key_session):
-        with pytest.raises(InvalidEntityIdException):
+        with pytest.raises(InvalidIpAddressException):
             await service.create_entity_session(entity_id, key_session, "")
+
+    @pytest.mark.asyncio
+    async def test_invalid_ip_format_raises(self, service, entity_id, key_session):
+        with pytest.raises(InvalidIpAddressException):
+            await service.create_entity_session(entity_id, key_session, "999.999.999.999")
 
     @pytest.mark.asyncio
     async def test_metadata_forbidden_key_raises(
@@ -248,7 +254,7 @@ class TestProcessEncryptedRequest:
             entity_id, key_session, "1.1.1.1"
         )
         payload = "encrypted_body"
-        tag = JWEHandler.compute_hmac(result.session_id, payload, key_session)
+        tag = SessionHMAC.compute_hmac(result.session_id, payload, key_session)
 
         returned_key = await service.process_encrypted_request(
             session_id=result.session_id,
@@ -271,7 +277,7 @@ class TestProcessEncryptedRequest:
 
     @pytest.mark.asyncio
     async def test_nonexistent_session_raises(self, service, key_session):
-        tag = JWEHandler.compute_hmac("fake_sid", "payload", key_session)
+        tag = SessionHMAC.compute_hmac("fake_sid", "payload", key_session)
         with pytest.raises(SessionNotFoundException):
             await service.process_encrypted_request(
                 session_id="fake_sid",
@@ -284,7 +290,7 @@ class TestProcessEncryptedRequest:
         result = await service.create_entity_session(
             entity_id, key_session, "1.1.1.1"
         )
-        tag = JWEHandler.compute_hmac(result.session_id, "original", key_session)
+        tag = SessionHMAC.compute_hmac(result.session_id, "original", key_session)
         with pytest.raises(InvalidTagException):
             await service.process_encrypted_request(
                 session_id=result.session_id,
@@ -299,7 +305,7 @@ class TestProcessEncryptedRequest:
         r1 = await service.create_entity_session(a, key_session, "1.1.1.1")
         r2 = await service.create_entity_session(b, key_b, "1.1.1.2")
 
-        tag_for_r1 = JWEHandler.compute_hmac(r1.session_id, "payload", key_session)
+        tag_for_r1 = SessionHMAC.compute_hmac(r1.session_id, "payload", key_session)
         with pytest.raises(InvalidTagException):
             await service.process_encrypted_request(
                 session_id=r2.session_id,
@@ -326,7 +332,7 @@ class TestProcessEncryptedRequest:
         before = await repository.get_entity_session(str(entity_id))
 
         payload = "x"
-        tag = JWEHandler.compute_hmac(result.session_id, payload, key_session)
+        tag = SessionHMAC.compute_hmac(result.session_id, payload, key_session)
         await service.process_encrypted_request(result.session_id, tag, payload)
 
         after = await repository.get_entity_session(str(entity_id))
@@ -374,29 +380,29 @@ class TestInvalidateEntitySession:
 # ==============================================================
 
 
-class TestJWEHandlerHMAC:
+class TestSessionHMAC:
     def test_compute_hmac_deterministic(self, key_session):
-        a = JWEHandler.compute_hmac("sid", "payload", key_session)
-        b = JWEHandler.compute_hmac("sid", "payload", key_session)
+        a = SessionHMAC.compute_hmac("sid", "payload", key_session)
+        b = SessionHMAC.compute_hmac("sid", "payload", key_session)
         assert a == b
 
     def test_compute_hmac_differs_by_payload(self, key_session):
-        a = JWEHandler.compute_hmac("sid", "p1", key_session)
-        b = JWEHandler.compute_hmac("sid", "p2", key_session)
+        a = SessionHMAC.compute_hmac("sid", "p1", key_session)
+        b = SessionHMAC.compute_hmac("sid", "p2", key_session)
         assert a != b
 
     def test_compute_hmac_differs_by_session_id(self, key_session):
-        a = JWEHandler.compute_hmac("sid1", "p", key_session)
-        b = JWEHandler.compute_hmac("sid2", "p", key_session)
+        a = SessionHMAC.compute_hmac("sid1", "p", key_session)
+        b = SessionHMAC.compute_hmac("sid2", "p", key_session)
         assert a != b
 
     def test_verify_hmac_accepts_valid(self, key_session):
-        tag = JWEHandler.compute_hmac("sid", "p", key_session)
-        assert JWEHandler.verify_hmac("sid", "p", tag, key_session) is True
+        tag = SessionHMAC.compute_hmac("sid", "p", key_session)
+        assert SessionHMAC.verify_hmac("sid", "p", tag, key_session) is True
 
     def test_verify_hmac_rejects_invalid(self, key_session):
-        assert JWEHandler.verify_hmac("sid", "p", "bad", key_session) is False
+        assert SessionHMAC.verify_hmac("sid", "p", "bad", key_session) is False
 
     def test_verify_hmac_rejects_modified_payload(self, key_session):
-        tag = JWEHandler.compute_hmac("sid", "original", key_session)
-        assert JWEHandler.verify_hmac("sid", "modified", tag, key_session) is False
+        tag = SessionHMAC.compute_hmac("sid", "original", key_session)
+        assert SessionHMAC.verify_hmac("sid", "modified", tag, key_session) is False

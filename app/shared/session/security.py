@@ -10,7 +10,36 @@ from jose import jwe
 from jose.exceptions import JWEError
 
 
+class SessionHMAC:
+    """HMAC operations for entity session request verification."""
+
+    @staticmethod
+    def compute_hmac(session_id: str, payload: str, key_session: str) -> str:
+        """Compute HMAC-SHA256 tag for request integrity verification."""
+        try:
+            key_bytes = base64.urlsafe_b64decode(key_session)
+        except Exception as e:
+            raise ValueError(f"Invalid key_session for HMAC: {e}") from e
+
+        message = f"{session_id}:{payload}".encode("utf-8")
+        signature = hmac.new(key_bytes, message, hashlib.sha256).digest()
+
+        return base64.urlsafe_b64encode(signature).decode().rstrip("=")
+
+    @staticmethod
+    def verify_hmac(
+        session_id: str,
+        payload: str,
+        tag: str,
+        key_session: str,
+    ) -> bool:
+        """Verify HMAC tag using constant-time comparison."""
+        expected_tag = SessionHMAC.compute_hmac(session_id, payload, key_session)
+        return secrets.compare_digest(tag, expected_tag)
+
+
 class JWEHandler:
+    """JWE encryption/decryption for legacy user session tokens."""
     def __init__(self, encryption_key: str):
         try:
             key_bytes = base64.b64decode(encryption_key)
@@ -68,25 +97,3 @@ class JWEHandler:
 
         now_timestamp = int(datetime.now(timezone.utc).timestamp())
         return exp > now_timestamp
-
-    @staticmethod
-    def compute_hmac(session_id: str, payload: str, key_session: str) -> str:
-        try:
-            key_bytes = base64.urlsafe_b64decode(key_session)
-        except Exception as e:
-            raise ValueError(f"Invalid key_session for HMAC: {e}")
-
-        message = f"{session_id}:{payload}".encode("utf-8")
-        signature = hmac.new(key_bytes, message, hashlib.sha256).digest()
-
-        return base64.urlsafe_b64encode(signature).decode().rstrip("=")
-
-    @staticmethod
-    def verify_hmac(
-        session_id: str,
-        payload: str,
-        tag: str,
-        key_session: str,
-    ) -> bool:
-        expected_tag = JWEHandler.compute_hmac(session_id, payload, key_session)
-        return secrets.compare_digest(tag, expected_tag)

@@ -43,7 +43,7 @@ class SessionRepository:
     ) -> None:
         await self.connect()
 
-        key = f"session:{user_id}"
+        key = f"user_session:{user_id}"
         value = session_data.model_dump_json()
 
         await self.client.setex(key, ttl_seconds, value)
@@ -54,7 +54,7 @@ class SessionRepository:
     async def get_session(self, user_id: str) -> Optional[SessionData]:
         await self.connect()
 
-        key = f"session:{user_id}"
+        key = f"user_session:{user_id}"
         data = await self.client.get(key)
 
         if not data:
@@ -72,7 +72,7 @@ class SessionRepository:
 
         session = await self.get_session(user_id)
 
-        key = f"session:{user_id}"
+        key = f"user_session:{user_id}"
         await self.client.delete(key)
 
         if session:
@@ -86,7 +86,7 @@ class SessionRepository:
         if session:
             session.last_activity = datetime.now(timezone.utc)
 
-            key = f"session:{user_id}"
+            key = f"user_session:{user_id}"
             remaining_ttl = await self.client.ttl(key)
             ttl = remaining_ttl if remaining_ttl > 0 else settings.SESSION_TTL_SECONDS
             await self.store_session(user_id, session, ttl_seconds=ttl)
@@ -135,29 +135,37 @@ class SessionRepository:
 
     async def entity_session_exists(self, entity_id: str) -> bool:
         await self.connect()
-        key = f"session:{entity_id}"
+        key = f"entity_session:{entity_id}"
         return bool(await self.client.exists(key))
 
     async def store_entity_session(
         self,
         session_data: EntitySessionData,
         ttl_seconds: int = settings.SESSION_TTL_SECONDS,
-    ) -> None:
+    ) -> bool:
+        """Store entity session atomically. Returns True if created, False if already exists."""
         await self.connect()
 
-        entity_key = f"session:{session_data.entity_id}"
+        entity_key = f"entity_session:{session_data.entity_id}"
         index_key = f"session_id_index:{session_data.session_id}"
         value = session_data.model_dump_json()
 
-        pipeline = self.client.pipeline()
-        pipeline.setex(entity_key, ttl_seconds, value)
-        pipeline.setex(index_key, ttl_seconds, session_data.entity_id)
-        await pipeline.execute()
+        # Atomic SET NX (set if not exists) to prevent race condition
+        entity_created = await self.client.set(
+            entity_key, value, ex=ttl_seconds, nx=True
+        )
+        
+        if not entity_created:
+            return False
+        
+        # If entity session was created, also create the index
+        await self.client.setex(index_key, ttl_seconds, session_data.entity_id)
+        return True
 
     async def get_entity_session(self, entity_id: str) -> Optional[EntitySessionData]:
         await self.connect()
 
-        key = f"session:{entity_id}"
+        key = f"entity_session:{entity_id}"
         data = await self.client.get(key)
 
         if not data:
@@ -190,23 +198,21 @@ class SessionRepository:
         existing = await self.get_entity_session(entity_id)
 
         pipeline = self.client.pipeline()
-        pipeline.delete(f"session:{entity_id}")
+        pipeline.delete(f"entity_session:{entity_id}")
         if existing:
             pipeline.delete(f"session_id_index:{existing.session_id}")
         await pipeline.execute()
 
     async def touch_entity_session(self, session_data: EntitySessionData) -> None:
+        """Update session last_activity without modifying TTL."""
         await self.connect()
 
         session_data.last_activity = datetime.now(timezone.utc)
-        entity_key = f"session:{session_data.entity_id}"
+        entity_key = f"entity_session:{session_data.entity_id}"
 
-        remaining_ttl = await self.client.ttl(entity_key)
-        if remaining_ttl <= 0:
-            return
-
-        await self.client.setex(
+        # Use keepttl=True to preserve original expiration time
+        await self.client.set(
             entity_key,
-            remaining_ttl,
             session_data.model_dump_json(),
+            keepttl=True,
         )

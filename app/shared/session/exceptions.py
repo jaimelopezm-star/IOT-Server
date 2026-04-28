@@ -80,3 +80,11 @@ class InvalidMetadataException(HTTPException):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=reason,
         )
+
+
+class InvalidIpAddressException(HTTPException):
+    def __init__(self, reason: str = "Invalid IP address format"):
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=reason,
+        )

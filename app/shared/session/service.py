@@ -1,8 +1,11 @@
 import base64
+import binascii
+import ipaddress
 import json
 import logging
 import secrets
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Annotated, Any, Optional
 from uuid import UUID, uuid4
 
@@ -12,6 +15,7 @@ from app.config import settings
 
 from .exceptions import (
     InvalidEntityIdException,
+    InvalidIpAddressException,
     InvalidKeySessionException,
     InvalidMetadataException,
     InvalidTagException,
@@ -25,7 +29,7 @@ from .models import (
     SessionTokens,
 )
 from .repository import SessionRepository
-from .security import JWEHandler
+from .security import JWEHandler, SessionHMAC
 
 
 logger = logging.getLogger(__name__)
@@ -40,14 +44,17 @@ class SessionService:
         encryption_key: Optional[str] = None,
     ):
         self._repository = SessionRepository(valkey_url or settings.VALKEY_URL)
-        self._jwe_handler = JWEHandler(encryption_key or settings.ENCRYPTION_KEY)
+        self._encryption_key = encryption_key or settings.ENCRYPTION_KEY
+        self._jwe_handler: Optional[JWEHandler] = None
+
+    def _get_jwe_handler(self) -> JWEHandler:
+        """Lazy initialization of JWE handler (only for legacy flow)."""
+        if self._jwe_handler is None:
+            self._jwe_handler = JWEHandler(self._encryption_key)
+        return self._jwe_handler
 
     async def close(self) -> None:
         await self._repository.close()
-
-    # ==============================================================
-    # Entity session API (per-key encryption flow)
-    # ==============================================================
 
     async def check_active_session(self, entity_id: UUID) -> bool:
         entity_id_str = self._validate_entity_id(entity_id)
@@ -81,10 +88,13 @@ class SessionService:
             last_activity=now,
         )
 
-        await self._repository.store_entity_session(
+        created = await self._repository.store_entity_session(
             session_data=session_data,
             ttl_seconds=settings.SESSION_TTL_SECONDS,
         )
+
+        if not created:
+            raise SessionAlreadyExistsException()
 
         logger.info(
             "Entity session created: entity_id=%s metadata_keys=%d",
@@ -107,7 +117,7 @@ class SessionService:
         if not session_data:
             raise SessionNotFoundException()
 
-        is_valid = JWEHandler.verify_hmac(
+        is_valid = SessionHMAC.verify_hmac(
             session_id=session_id,
             payload=payload,
             tag=tag,
@@ -136,9 +146,9 @@ class SessionService:
         await self._repository.delete_entity_session(entity_id_str)
         logger.info("Entity session invalidated: entity_id=%s", entity_id_str)
 
-    # ==============================================================
-    # Validation helpers
-    # ==============================================================
+    async def invalidate_user_session(self, user_id: str) -> None:
+        await self._repository.delete_session(user_id)
+        logger.info("User session invalidated: user_id=%s", user_id)
 
     @staticmethod
     def _validate_entity_id(entity_id: UUID) -> str:
@@ -146,8 +156,8 @@ class SessionService:
             return str(entity_id)
         try:
             return str(UUID(str(entity_id)))
-        except (ValueError, TypeError):
-            raise InvalidEntityIdException()
+        except (ValueError, TypeError) as e:
+            raise InvalidEntityIdException() from e
 
     @staticmethod
     def _validate_key_session(key_session: str) -> None:
@@ -155,8 +165,10 @@ class SessionService:
             raise InvalidKeySessionException("key_session cannot be empty")
         try:
             key_bytes = base64.urlsafe_b64decode(key_session)
-        except Exception:
-            raise InvalidKeySessionException("key_session must be valid urlsafe base64")
+        except (binascii.Error, ValueError) as e:
+            raise InvalidKeySessionException(
+                "key_session must be valid urlsafe base64"
+            ) from e
 
         if len(key_bytes) != _KEY_SESSION_EXPECTED_BYTES:
             raise InvalidKeySessionException(
@@ -166,7 +178,14 @@ class SessionService:
     @staticmethod
     def _validate_ip_address(ip_address: str) -> None:
         if not ip_address or not ip_address.strip():
-            raise InvalidEntityIdException()
+            raise InvalidIpAddressException("IP address cannot be empty")
+        
+        try:
+            ipaddress.ip_address(ip_address.strip())
+        except (ValueError, AttributeError) as e:
+            raise InvalidIpAddressException(
+                f"Invalid IP address format: {ip_address}"
+            ) from e
 
     @staticmethod
     def _validate_metadata(
@@ -183,7 +202,9 @@ class SessionService:
                 f"metadata cannot have more than {settings.METADATA_MAX_KEYS} keys"
             )
 
-        forbidden = set(metadata.keys()) & settings.METADATA_FORBIDDEN_KEYS
+        metadata_keys_lower = {k.casefold() for k in metadata.keys()}
+        forbidden_keys_lower = {k.casefold() for k in settings.METADATA_FORBIDDEN_KEYS}
+        forbidden = metadata_keys_lower & forbidden_keys_lower
         if forbidden:
             raise InvalidMetadataException(
                 f"metadata contains forbidden keys: {sorted(forbidden)}"
@@ -191,8 +212,8 @@ class SessionService:
 
         try:
             serialized = json.dumps(metadata)
-        except (TypeError, ValueError):
-            raise InvalidMetadataException("metadata must be JSON-serializable")
+        except (TypeError, ValueError) as e:
+            raise InvalidMetadataException("metadata must be JSON-serializable") from e
 
         if len(serialized.encode("utf-8")) > settings.METADATA_MAX_SIZE_BYTES:
             raise InvalidMetadataException(
@@ -200,10 +221,6 @@ class SessionService:
             )
 
         return metadata
-
-    # ==============================================================
-    # Legacy user session API (JWT-based, kept for existing auth flow)
-    # ==============================================================
 
     async def create_session_with_tokens(
         self,
@@ -216,7 +233,7 @@ class SessionService:
         token_id = str(uuid4())
         refresh_token = secrets.token_urlsafe(32)
 
-        access_token = self._jwe_handler.encrypt(
+        access_token = self._get_jwe_handler().encrypt(
             claims={**claims, "jti": token_id},
             ttl_minutes=30,
         )
@@ -244,7 +261,7 @@ class SessionService:
         return SessionTokens(
             access_token=access_token,
             refresh_token=refresh_token,
-            token_type="Bearer",
+            token_type="bearer",
         )
 
     async def check_rate_limit(self, ip_address: str, max_attempts: int = 3) -> bool:
@@ -268,7 +285,14 @@ class SessionService:
         return await self._repository.get_session(user_id)
 
 
+@lru_cache
 def get_session_service() -> SessionService:
+    """
+    Get or create a singleton SessionService instance.
+    
+    Using @lru_cache ensures that the same instance is reused across
+    all dependency injections, preventing connection pool exhaustion.
+    """
     return SessionService()
 
 
