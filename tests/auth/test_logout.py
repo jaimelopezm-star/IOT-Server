@@ -1,3 +1,4 @@
+<<<<<<< feature/session-per-key-encryption
 """Tests for logout endpoint - User session invalidation."""
 
 import pytest
@@ -138,11 +139,32 @@ class TestLogoutEndpoint:
         token = login_response.json()["access_token"]
 
         # Logout
+=======
+from fastapi.testclient import TestClient
+
+
+class TestLogout:
+    def test_logout_revokes_token(
+        self, client: TestClient, master_admin_account: dict
+    ):
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": master_admin_account["email"],
+                "password": master_admin_account["password"],
+            },
+        )
+        assert login_response.status_code == 200
+
+        token = login_response.json()["access_token"]
+
+>>>>>>> main
         logout_response = client.post(
             "/api/v1/auth/logout",
             headers={"Authorization": f"Bearer {token}"},
         )
         assert logout_response.status_code == 200
+<<<<<<< feature/session-per-key-encryption
         assert logout_response.json() == {"message": "Logged out successfully"}
 
         # Try to use the same token (should fail after logout)
@@ -203,3 +225,12 @@ class TestLogoutComparison:
         # Verify both sessions gone
         assert await service.check_active_session(entity_id) is False
         assert await service.get_session(user_id) is None
+=======
+        assert logout_response.json()["message"] == "Logged out successfully"
+
+        protected_response = client.get(
+            "/api/v1/users",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert protected_response.status_code == 401
+>>>>>>> main
